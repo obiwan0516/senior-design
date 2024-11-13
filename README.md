@@ -1,4 +1,4 @@
-# Arduino Sensor and Display Project
+# Magnetic Levitation Table Sensor Code
 
 This repository contains Arduino sketches and libraries for interfacing various sensors and an LCD. Each file is designed to test or implement specific sensors or modules in an Arduino environment. Below is a description of each included file and how it contributes to the project.
 
