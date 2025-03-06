@@ -17,11 +17,15 @@ VL53L0X sensor4;
 #define XSHUT_2 8 // To temporarily shut it off after init (pin 8)
 #define XSHUT_3 11 // To temporarily shut it off after init (pin 11)
 #define XSHUT_4 7 // To temporarily shut it off after init (pin 7)
+#define CSensor_Pin A0
+
 
 // Distance Mapping Parameters
 const int MIN_DIST = 50;   // Minimum distance (mm)
 const int MAX_DIST = 300;  // Maximum distance (mm)
 const int MAX_PWM = 255;   // Max PWM value
+
+const float vcc = 5;  // Reference voltage (12V power supply)
 
 // Variables to track system state
 int distance1 = 0;
@@ -68,7 +72,7 @@ void setup() {
 void loop() {
   // Read all sensor data
   readSensors();
-  
+
   // Calculate values and control hardware
   processData();
   
@@ -199,6 +203,13 @@ void updateLocalDisplay() {
   if (buzzerActive) {
     lcd.print(" ALERT!");
   }
+
+  int rawValue = analogRead(CSensor_Pin);
+  float current = (((rawValue / 1023.0) * vcc) - 2.5)/0.2;  // Convert ADC value to voltage
+  lcd.print("A: ");
+  lcd.print(current);
+
+  Serial.println(current);  // Output only the voltage for Serial Plotter
 }
 
 void transmitData() {

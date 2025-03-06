@@ -11,6 +11,8 @@
 #define LCD_RD A0 // LCD Read goes to Analog 0
 #define LCD_RESET A4 // Can alternately just connect to Arduino's reset pin
 
+#define BUZZER_PIN 40
+
 // Color definitions
 #define BLACK   0x0000
 #define BLUE    0x001F
@@ -164,6 +166,13 @@ void processDataPacket(String data) {
   distance4 = values[3];
   avgDistance = values[4];
   pwmValue = values[5];
+
+  // **Buzzer Activation when distance <= 60mm**
+    if (avgDistance <= 60) {
+      tone(BUZZER_PIN, 1000); // Play buzzer at 1kHz
+    } else {
+      noTone(BUZZER_PIN); // Stop buzzer
+    }
   
   // Debug output
   Serial.print("Received: ");
