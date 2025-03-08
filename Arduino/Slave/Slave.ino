@@ -19,7 +19,6 @@ VL53L0X sensor4;
 #define XSHUT_4 7 // To temporarily shut it off after init (pin 7)
 #define CSensor_Pin A0
 
-
 // Distance Mapping Parameters
 const int MIN_DIST = 50;   // Minimum distance (mm)
 const int MAX_DIST = 300;  // Maximum distance (mm)
@@ -55,7 +54,7 @@ void setup() {
   lcd.clear();
   lcd.print("Beginning Init");
   
-  // Initialize all sensors (same as original code)
+  // Initialize all sensors
   initializeSensors();
   
   // Set up motor pins
@@ -151,15 +150,15 @@ void readSensors() {
   distance3 = sensor3.readRangeSingleMillimeters();
   distance4 = sensor4.readRangeSingleMillimeters();
   
-  // Handle timeouts
+  // Handle timeouts but ensure we still send data
   if (sensor1.timeoutOccurred() || sensor2.timeoutOccurred() || 
       sensor3.timeoutOccurred() || sensor4.timeoutOccurred()) {
     lcd.clear();
     lcd.print("Sensor Timeout!");
-    return;
+    // Instead of returning, we'll continue with whatever data we have
   }
   
-  // Compute average distance
+  // Compute average distance (even with timeouts)
   avgDistance = (distance1 + distance2 + distance3 + distance4) / 4;
 }
 
@@ -208,8 +207,8 @@ void updateLocalDisplay() {
   float current = (((rawValue / 1023.0) * vcc) - 2.5)/0.2;  // Convert ADC value to voltage
   lcd.print("A: ");
   lcd.print(current);
-
-  Serial.println(current);  // Output only the voltage for Serial Plotter
+  
+  // Removed Serial.println(current) to avoid interference
 }
 
 void transmitData() {

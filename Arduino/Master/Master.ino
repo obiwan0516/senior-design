@@ -3,6 +3,7 @@
 
 #include <Elegoo_GFX.h>    // Core graphics library
 #include <Elegoo_TFTLCD.h> // Hardware-specific library
+#include <TouchScreen.h>   // Touch screen library
 
 // The control pins for the LCD
 #define LCD_CS A3 // Chip Select goes to Analog 3
@@ -10,6 +11,20 @@
 #define LCD_WR A1 // LCD Write goes to Analog 1
 #define LCD_RD A0 // LCD Read goes to Analog 0
 #define LCD_RESET A4 // Can alternately just connect to Arduino's reset pin
+
+// Touch screen pins
+#define YP A2  // must be an analog pin
+#define XM A3  // must be an analog pin
+#define YM 8   // can be a digital pin
+#define XP 9   // can be a digital pin
+
+// Touch screen parameters
+#define TS_MINX 150
+#define TS_MINY 120
+#define TS_MAXX 920
+#define TS_MAXY 940
+#define MINPRESSURE 10
+#define MAXPRESSURE 1000
 
 #define BUZZER_PIN 40
 
@@ -24,8 +39,39 @@
 #define WHITE   0xFFFF
 #define ORANGE  0xFD20
 #define DARKGREEN 0x03E0
+#define GRAY    0x8410
+#define DARKBLUE 0x0010
+#define LIGHTBLUE 0xAEDC
+
+// Menu button definitions
+#define MENU_BUTTON_X 5
+#define MENU_BUTTON_Y 5
+#define MENU_BUTTON_W 50
+#define MENU_BUTTON_H 30
+
+// Main menu button definitions
+#define MAIN_BTN_X 40
+#define MAIN_BTN_W 240
+#define MAIN_BTN_H 40
+#define MAIN_BTN_Y1 70
+#define MAIN_BTN_Y2 130
+#define MAIN_BTN_Y3 190
+
+// Application state
+#define STATE_MENU 0
+#define STATE_GRAPHS 1
+#define STATE_FLAPPY_BIRD 2
+#define STATE_MAG_LEVITATION 3
+int currentState = STATE_MENU;
+
+// Initialize touch screen
+TouchScreen ts = TouchScreen(XP, YP, XM, YM, 300);
 
 Elegoo_TFTLCD tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
+
+// Touch debounce variables
+unsigned long lastTouchTime = 0;
+#define TOUCH_DEBOUNCE 300 // ms
 
 // Variables to store data from Uno
 int distance1 = 0;
@@ -39,61 +85,159 @@ bool buzzerActive = false;
 
 // System variables
 unsigned long lastPacketTime = 0;
+unsigned long responseTime = 0;
 int packetCount = 0;
 bool connectionActive = false;
 String rawData = "";
 
+// Graph variables
+#define GRAPH_HEIGHT 60
+#define GRAPH_WIDTH 180
+#define GRAPH_X 30
+#define GRAPH_Y1 85
+#define GRAPH_Y2 185
+#define MAX_DATA_POINTS 40
+
+int distanceHistory[MAX_DATA_POINTS];
+int pwmHistory[MAX_DATA_POINTS];
+int historyIndex = 0;
+bool graphFull = false;
+
+//************************************************ SETUP ******************************************************************
+
 void setup(void) {
-  Serial.begin(9600);   // Communication with PC
+  // Only keep Serial1 for Uno communication
   Serial1.begin(9600);  // Communication with Uno on pins 18(TX1) and 19(RX1)
   
-  Serial.println(F("Distance Sensor Monitor"));
-
+  // Initialize the buzzer pin
+  pinMode(BUZZER_PIN, OUTPUT);
+  noTone(BUZZER_PIN);
+  
   // Initialize the display
   tft.reset();
   
   uint16_t identifier = tft.readID();
-  if(identifier == 0x9325) {
-    Serial.println(F("Found ILI9325 LCD driver"));
-  } else if(identifier == 0x9328) {
-    Serial.println(F("Found ILI9328 LCD driver"));
-  } else if(identifier == 0x4535) {
-    Serial.println(F("Found LGDP4535 LCD driver"));
-  } else if(identifier == 0x7575) {
-    Serial.println(F("Found HX8347G LCD driver"));
-  } else if(identifier == 0x9341) {
-    Serial.println(F("Found ILI9341 LCD driver"));
-  } else if(identifier == 0x8357) {
-    Serial.println(F("Found HX8357D LCD driver"));
-  } else if(identifier == 0x0101) {
+  // Identify LCD without Serial debugging
+  if(identifier == 0x0101) {
     identifier = 0x9341;
-    Serial.println(F("Found 0x9341 LCD driver"));
   } else if(identifier == 0x1111) {
-    identifier = 0x9328;
-    Serial.println(F("Found 0x9328 LCD driver"));
-  } else {
-    Serial.print(F("Unknown LCD driver chip: "));
-    Serial.println(identifier, HEX);
     identifier = 0x9328;
   }
   
   tft.begin(identifier);
+  tft.setRotation(1);  // Set to landscape mode (0-3 for different rotations)
   
-  // Initial display setup
-  tft.fillScreen(BLACK);
-  tft.setCursor(0, 0);
-  tft.setTextColor(YELLOW);
-  tft.setTextSize(2);
-  tft.println("Distance Sensor");
-  tft.println("Monitor System");
-  tft.setTextColor(WHITE);
-  tft.println("---------------");
-  tft.println("");
-  tft.setTextColor(CYAN);
-  tft.println("Waiting for data...");
+  // Initialize history arrays
+  for(int i = 0; i < MAX_DATA_POINTS; i++) {
+    distanceHistory[i] = 0;
+    pwmHistory[i] = 0;
+  }
+  
+  // Display loading animation
+  showLoadingAnimation();
+  
+  // Show main menu
+  drawMainMenu();
 }
 
+//************************************************ LOOP ******************************************************************
+
 void loop(void) {
+  // Check touch input for menu navigation
+  handleTouchInput();
+  
+  // Handle current state
+  switch(currentState) {
+    case STATE_MENU:
+      // No continuous updates needed for menu
+      break;
+      
+    case STATE_GRAPHS:
+      handleGraphsMode();
+      break;
+      
+    case STATE_FLAPPY_BIRD:
+      // Placeholder for Flappy Bird game loop
+      // handleFlappyBirdGame();
+      break;
+      
+    case STATE_MAG_LEVITATION:
+      // Placeholder for magnetic levitation animation
+      // handleMagLevitation();
+      break;
+  }
+  
+  // Brief delay
+  delay(10);
+}
+
+//************************************************ HandleTouchInput ******************************************************************
+
+void handleTouchInput() {
+  // Read touch input
+  TSPoint p = ts.getPoint();
+  
+  // Restore pins that were used for touchscreen
+  pinMode(XM, OUTPUT);
+  pinMode(YP, OUTPUT);
+  
+  // Check if there's a valid touch
+  if (p.z > MINPRESSURE && p.z < MAXPRESSURE) {
+    // Debounce touch
+    if (millis() - lastTouchTime < TOUCH_DEBOUNCE) {
+      return;
+    }
+    lastTouchTime = millis();
+    
+    // Map touch coordinates to screen coordinates
+    // For rotation 1 (landscape)
+    int x = map(p.y, TS_MINY, TS_MAXY, 0, tft.width()); 
+    int y = map(p.x, TS_MINX, TS_MAXX, 0, tft.height());
+    
+    // Handle touch based on current state
+    switch(currentState) {
+      case STATE_MENU:
+        // Check which menu button was pressed
+        if (isTouchInRect(x, y, MAIN_BTN_X, MAIN_BTN_Y1, MAIN_BTN_W, MAIN_BTN_H)) {
+          // Sensor Graphs button
+          currentState = STATE_GRAPHS;
+          drawScreenLayout();
+        } 
+        else if (isTouchInRect(x, y, MAIN_BTN_X, MAIN_BTN_Y2, MAIN_BTN_W, MAIN_BTN_H)) {
+          // Flappy Bird button
+          currentState = STATE_FLAPPY_BIRD;
+          drawFlappyBirdScreen();
+        } 
+        else if (isTouchInRect(x, y, MAIN_BTN_X, MAIN_BTN_Y3, MAIN_BTN_W, MAIN_BTN_H)) {
+          // Magnetic Levitation button
+          currentState = STATE_MAG_LEVITATION;
+          drawMagLevitationScreen();
+        }
+        break;
+        
+      case STATE_GRAPHS:
+      case STATE_FLAPPY_BIRD:
+      case STATE_MAG_LEVITATION:
+        // Check if menu button was pressed
+        if (isTouchInRect(x, y, MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H)) {
+          // Return to main menu
+          currentState = STATE_MENU;
+          drawMainMenu();
+        }
+        break;
+    }
+  }
+}
+
+// Helper function to check if touch is within a rectangle
+bool isTouchInRect(int touchX, int touchY, int rectX, int rectY, int rectW, int rectH) {
+  return (touchX >= rectX && touchX <= rectX + rectW && 
+          touchY >= rectY && touchY <= rectY + rectH);
+}
+
+//************************************************ HandleGraphsMode ******************************************************************
+
+void handleGraphsMode() {
   // Check for connection status
   if (millis() - lastPacketTime > 3000) {
     if (connectionActive) {
@@ -103,7 +247,7 @@ void loop(void) {
   }
   
   // Check for messages from Uno
-  if (Serial1.available()) {
+  while (Serial1.available()) {
     char c = Serial1.read();
     
     // Add to buffer until end of packet
@@ -111,23 +255,204 @@ void loop(void) {
       rawData += c;
     } else {
       // Process complete packet
+      unsigned long startProcess = millis();
       processDataPacket(rawData);
       rawData = "";
+      
+      // Calculate response time (processing time)
+      responseTime = millis() - startProcess;
       
       // Update connection status
       lastPacketTime = millis();
       if (!connectionActive) {
         connectionActive = true;
+        drawScreenLayout(); // Redraw layout after reconnection
       }
       
       packetCount++;
+      
+      // Add new data to history
+      distanceHistory[historyIndex] = avgDistance;
+      pwmHistory[historyIndex] = pwmValue;
+      historyIndex = (historyIndex + 1) % MAX_DATA_POINTS;
+      if(historyIndex == 0) {
+        graphFull = true;
+      }
+      
+      // Update display with new data
       updateDisplay();
     }
   }
-  
-  // Brief delay
-  delay(10);
 }
+
+//************************************************ LOADING ANIMATION STARTUP ******************************************************************
+
+
+void showLoadingAnimation() {
+  // Clear the screen
+  tft.fillScreen(BLACK);
+  
+  // Draw title
+  tft.setCursor(50, 30);
+  tft.setTextColor(YELLOW);
+  tft.setTextSize(2);
+  tft.println("Distance Sensor");
+  tft.setCursor(60, 50);
+  tft.println("Monitor System");
+  
+  // Draw loading text
+  tft.setCursor(90, 100);
+  tft.setTextColor(WHITE);
+  tft.setTextSize(1);
+  tft.println("LOADING...");
+  
+  // Draw progress bar outline
+  tft.drawRect(60, 120, 200, 20, WHITE);
+  
+  // Animate progress bar
+  for (int i = 0; i < 198; i += 2) {
+    tft.fillRect(61, 121, i, 18, CYAN);
+    delay(10);
+  }
+  
+  // Display ready message
+  tft.fillRect(60, 150, 200, 30, BLACK);
+  tft.setCursor(90, 150);
+  tft.setTextColor(GREEN);
+  tft.setTextSize(2);
+  tft.println("READY!");
+  delay(500);
+}
+
+//************************************************ MAIN MENU ******************************************************************
+
+void drawMainMenu() {
+  // Clear the screen
+  tft.fillScreen(BLACK);
+  
+  // Draw title
+  tft.setCursor(70, 20);
+  tft.setTextColor(YELLOW);
+  tft.setTextSize(2);
+  tft.println("MAIN MENU");
+  
+  // Draw menu buttons
+  // Button 1: Sensor Graphs
+  drawMenuButton(MAIN_BTN_X, MAIN_BTN_Y1, MAIN_BTN_W, MAIN_BTN_H, "Sensor Graphs", BLUE);
+  
+  // Button 2: Flappy Bird Game
+  drawMenuButton(MAIN_BTN_X, MAIN_BTN_Y2, MAIN_BTN_W, MAIN_BTN_H, "Flappy Bird", GREEN);
+  
+  // Button 3: Magnetic Levitation
+  drawMenuButton(MAIN_BTN_X, MAIN_BTN_Y3, MAIN_BTN_W, MAIN_BTN_H, "Mag Levitation", MAGENTA);
+}
+
+//************************************************ Draws the buttons ******************************************************************
+
+void drawMenuButton(int x, int y, int w, int h, const char* label, uint16_t color) {
+  tft.fillRoundRect(x, y, w, h, 8, color);
+  tft.drawRoundRect(x, y, w, h, 8, WHITE);
+  
+  // Calculate text length
+  int textLength = strlen(label) * 12; // Approximate width with text size 2
+  
+  // Center text on button
+  int textX = x + (w / 2) - (textLength / 2);
+  int textY = y + (h / 2) - 8;
+  
+  tft.setCursor(textX, textY);
+  tft.setTextColor(WHITE);
+  tft.setTextSize(2);
+  tft.print(label);
+}
+
+//************************************************ Draws Sensor Graphs ******************************************************************
+
+void drawScreenLayout() {
+  tft.fillScreen(BLACK);
+  
+  // Draw "Menu" button in top-left corner
+  tft.fillRoundRect(MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H, 4, BLUE);
+  tft.drawRoundRect(MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H, 4, WHITE);
+  tft.setCursor(MENU_BUTTON_X + 7, MENU_BUTTON_Y + 10);
+  tft.setTextColor(WHITE);
+  tft.setTextSize(1);
+  tft.print("MENU");
+  
+  // Draw title - make it more compact
+  tft.setCursor(70, 5);
+  tft.setTextColor(YELLOW);
+  tft.setTextSize(2);
+  tft.println("Distance Monitor");
+  
+  // Draw Distance Graph box
+  tft.drawRect(GRAPH_X-5, GRAPH_Y1-15, GRAPH_WIDTH+10, GRAPH_HEIGHT+20, WHITE);
+  tft.setCursor(GRAPH_X-3, GRAPH_Y1-13);
+  tft.setTextColor(CYAN);
+  tft.setTextSize(1);
+  tft.println("Distance (mm)");
+  
+  // Draw PWM Graph box
+  tft.drawRect(GRAPH_X-5, GRAPH_Y2-15, GRAPH_WIDTH+10, GRAPH_HEIGHT+20, WHITE);
+  tft.setCursor(GRAPH_X-3, GRAPH_Y2-13);
+  tft.setTextColor(MAGENTA);
+  tft.setTextSize(1);
+  tft.println("PWM Value");
+  
+  // Draw grid lines for distance graph
+  for(int y = 0; y < GRAPH_HEIGHT; y += 15) {
+    for(int x = 0; x < GRAPH_WIDTH; x += 5) {
+      tft.drawPixel(GRAPH_X + x, GRAPH_Y1 + y, GRAY);
+    }
+  }
+  
+  // Draw grid lines for PWM graph
+  for(int y = 0; y < GRAPH_HEIGHT; y += 15) {
+    for(int x = 0; x < GRAPH_WIDTH; x += 5) {
+      tft.drawPixel(GRAPH_X + x, GRAPH_Y2 + y, GRAY);
+    }
+  }
+  
+  // Move indicators and readouts to ensure they fit on screen
+  int rightColumnX = 220;
+  
+  // Direction indicators (initially both off)
+  tft.fillRect(rightColumnX, 90, 30, 20, DARKGREEN); // FWD button (off)
+  tft.fillRect(rightColumnX + 40, 90, 30, 20, DARKBLUE);  // REV button (off)
+  
+  tft.setCursor(rightColumnX + 5, 95);
+  tft.setTextColor(WHITE);
+  tft.setTextSize(1);
+  tft.print("FWD");
+  
+  tft.setCursor(rightColumnX + 45, 95);
+  tft.setTextColor(WHITE);
+  tft.setTextSize(1);
+  tft.print("REV");
+  
+  // Sensor readouts area
+  tft.setCursor(rightColumnX, 120);
+  tft.setTextColor(WHITE);
+  tft.setTextSize(1);
+  tft.print("S1:");
+  
+  tft.setCursor(rightColumnX + 40, 120);
+  tft.print("S2:");
+  
+  tft.setCursor(rightColumnX, 135);
+  tft.print("S3:");
+  
+  tft.setCursor(rightColumnX + 40, 135);
+  tft.print("S4:");
+  
+  // Log area at bottom
+  tft.drawRect(0, 255, tft.width(), 65, WHITE);
+  tft.setCursor(5, 258);
+  tft.setTextColor(YELLOW);
+  tft.print("SYSTEM LOG");
+}
+
+//************************************************ Processes the packets from Arduino Uno ******************************************************************
 
 void processDataPacket(String data) {
   // Parse data packet
@@ -168,107 +493,236 @@ void processDataPacket(String data) {
   pwmValue = values[5];
 
   // **Buzzer Activation when distance <= 60mm**
-    if (avgDistance <= 60) {
-      tone(BUZZER_PIN, 1000); // Play buzzer at 1kHz
-    } else {
-      noTone(BUZZER_PIN); // Stop buzzer
-    }
-  
-  // Debug output
-  Serial.print("Received: ");
-  Serial.println(data);
+  if (avgDistance <= 60) {
+    tone(BUZZER_PIN, 1000); // Play buzzer at 1kHz
+  } else {
+    noTone(BUZZER_PIN); // Stop buzzer
+  }
 }
 
+//************************************************ Updates the display when a measurement is logged ******************************************************************
+
 void updateDisplay() {
-  // Clear screen for new data
-  tft.fillRect(0, 50, tft.width(), tft.height() - 50, BLACK);
+  int rightColumnX = 220;
   
-  // Set starting position
-  tft.setCursor(0, 50);
-  
-  // Display individual sensor readings
+  // Update sensor readings
+  tft.fillRect(rightColumnX + 20, 120, 20, 8, BLACK);
+  tft.setCursor(rightColumnX + 20, 120);
   tft.setTextColor(WHITE);
   tft.setTextSize(1);
-  tft.print("Sensor 1: ");
   tft.print(distance1);
-  tft.println(" mm");
   
-  tft.print("Sensor 2: ");
+  tft.fillRect(rightColumnX + 60, 120, 20, 8, BLACK);
+  tft.setCursor(rightColumnX + 60, 120);
   tft.print(distance2);
-  tft.println(" mm");
   
-  tft.print("Sensor 3: ");
+  tft.fillRect(rightColumnX + 20, 135, 20, 8, BLACK);
+  tft.setCursor(rightColumnX + 20, 135);
   tft.print(distance3);
-  tft.println(" mm");
   
-  tft.print("Sensor 4: ");
+  tft.fillRect(rightColumnX + 60, 135, 20, 8, BLACK);
+  tft.setCursor(rightColumnX + 60, 135);
   tft.print(distance4);
-  tft.println(" mm");
   
-  // Display average distance with larger text
-  tft.setTextColor(YELLOW);
-  tft.setTextSize(2);
-  tft.setCursor(0, 100);
+  // Update average distance display
+  tft.fillRect(rightColumnX, 155, 95, 15, BLACK);
+  tft.setCursor(rightColumnX, 155);
+  tft.setTextColor(CYAN);
+  tft.setTextSize(1);
   tft.print("Avg: ");
   tft.print(avgDistance);
-  tft.println(" mm");
+  tft.print(" mm");
   
-  // Display PWM and direction
-  tft.setTextColor(GREEN);
-  tft.setCursor(0, 130);
+  // Update PWM display
+  tft.fillRect(rightColumnX, 170, 95, 15, BLACK);
+  tft.setCursor(rightColumnX, 170);
+  tft.setTextColor(MAGENTA);
   tft.print("PWM: ");
   tft.print(pwmValue);
   
-  // Display motor direction
-  tft.setCursor(0, 150);
-  tft.print("Dir: ");
+  // Update direction indicators
   if (motorDirection == "FWD") {
-    tft.setTextColor(CYAN);
-    tft.println("FORWARD ");
+    tft.fillRect(rightColumnX, 90, 30, 20, GREEN);  // FWD on
+    tft.fillRect(rightColumnX + 40, 90, 30, 20, DARKBLUE); // REV off
   } else if (motorDirection == "REV") {
-    tft.setTextColor(MAGENTA);
-    tft.println("REVERSE ");
+    tft.fillRect(rightColumnX, 90, 30, 20, DARKGREEN); // FWD off
+    tft.fillRect(rightColumnX + 40, 90, 30, 20, RED);     // REV on
   } else {
-    tft.setTextColor(WHITE);
-    tft.println(motorDirection);
+    tft.fillRect(rightColumnX, 90, 30, 20, DARKGREEN); // FWD off
+    tft.fillRect(rightColumnX + 40, 90, 30, 20, DARKBLUE);  // REV off
   }
   
-  // Display alert status
+  // Update direction text
+  tft.setCursor(rightColumnX + 5, 95);
+  tft.setTextColor(WHITE);
+  tft.print("FWD");
+  tft.setCursor(rightColumnX + 45, 95);
+  tft.print("REV");
+  
+  // Update proximity alert
   if (buzzerActive) {
-    tft.fillRect(0, 170, tft.width(), 30, RED);
-    tft.setCursor(20, 175);
+    tft.fillRect(rightColumnX, 200, 70, 30, RED);
+    tft.setCursor(rightColumnX + 3, 210);
     tft.setTextColor(WHITE);
-    tft.setTextSize(2);
-    tft.println("PROXIMITY ALERT!");
+    tft.print("ALERT!");
+  } else {
+    tft.fillRect(rightColumnX, 200, 70, 30, BLACK);
   }
   
-  // Display connection info at bottom
-  tft.setCursor(0, 210);
+  // Update log
+  tft.fillRect(5, 270, tft.width()-10, 45, BLACK);
+  tft.setCursor(5, 270);
   tft.setTextColor(WHITE);
   tft.setTextSize(1);
   tft.print("Packets: ");
-  tft.println(packetCount);
+  tft.print(packetCount);
   
+  tft.setCursor(5, 285);
+  tft.print("Response: ");
+  tft.print(responseTime);
+  tft.print(" ms");
+  
+  tft.setCursor(5, 300);
   tft.print("Last update: ");
-  tft.print(lastPacketTime / 1000);
-  tft.println("s");
+  tft.print((millis() - lastPacketTime) / 1000.0, 1);
+  tft.print(" s ago");
+  
+  // Update the distance graph
+  updateGraph(distanceHistory, GRAPH_X, GRAPH_Y1, GRAPH_WIDTH, GRAPH_HEIGHT, 0, 500, CYAN);
+  
+  // Update the PWM graph
+  updateGraph(pwmHistory, GRAPH_X, GRAPH_Y2, GRAPH_WIDTH, GRAPH_HEIGHT, 0, 255, MAGENTA);
 }
 
+//************************************************ Clears the distance sensor graphs ******************************************************************
+
+void updateGraph(int dataArray[], int x, int y, int width, int height, int minValue, int maxValue, uint16_t color) {
+  // Clear the graph area
+  tft.fillRect(x, y, width, height, BLACK);
+  
+  // Redraw grid lines
+  for(int gy = 0; gy < height; gy += 15) {
+    for(int gx = 0; gx < width; gx += 5) {
+      tft.drawPixel(x + gx, y + gy, GRAY);
+    }
+  }
+  
+  // Draw axis values
+  tft.setTextColor(WHITE);
+  tft.setTextSize(1);
+  tft.setCursor(x - 25, y);
+  tft.print(maxValue);
+  tft.setCursor(x - 25, y + height - 8);
+  tft.print(minValue);
+  
+  // Number of points to plot
+  int numPoints = graphFull ? MAX_DATA_POINTS : historyIndex;
+  
+  // Don't try to plot if we have no data
+  if(numPoints == 0) return;
+  
+  // Calculate scaling factors
+  float xScale = (float)width / (numPoints - 1);
+  float yScale = (float)height / (maxValue - minValue);
+  
+  // Plot the data points
+  for (int i = 0; i < numPoints - 1; i++) {
+    int idx1 = (historyIndex - numPoints + i) % MAX_DATA_POINTS;
+    if (idx1 < 0) idx1 += MAX_DATA_POINTS;
+    
+    int idx2 = (idx1 + 1) % MAX_DATA_POINTS;
+    
+    int value1 = dataArray[idx1];
+    int value2 = dataArray[idx2];
+    
+    // Constrain values to the range
+    value1 = constrain(value1, minValue, maxValue);
+    value2 = constrain(value2, minValue, maxValue);
+    
+    // Calculate plot coordinates
+    int x1 = x + i * xScale;
+    int y1 = y + height - (value1 - minValue) * yScale;
+    int x2 = x + (i + 1) * xScale;
+    int y2 = y + height - (value2 - minValue) * yScale;
+    
+    // Draw the line segment
+    tft.drawLine(x1, y1, x2, y2, color);
+  }
+}
+
+//************************************************ Draws the CONNECTION LOST screen ******************************************************************
+
 void drawStatusScreen() {
-  tft.fillRect(0, 50, tft.width(), tft.height() - 50, BLACK);
-  tft.setCursor(0, 80);
+  tft.fillRect(0, 50, tft.width(), 200, BLACK);
+  tft.setCursor(80, 100);
   tft.setTextColor(RED);
   tft.setTextSize(2);
   tft.println("CONNECTION LOST");
-  tft.println("");
+  tft.setCursor(50, 130);
   tft.setTextColor(YELLOW);
   tft.setTextSize(1);
-  tft.println("Please check:");
-  tft.println("- Uno power supply");
-  tft.println("- Serial connections");
-  tft.println("- Sensor operation");
-  tft.println("");
-  tft.println("Last data received at:");
+  tft.println("Please check device connections");
+  
+  tft.setCursor(5, 270);
+  tft.setTextColor(WHITE);
+  tft.print("Last packet received: ");
   tft.print(lastPacketTime / 1000);
-  tft.println(" seconds");
+  tft.println(" s");
+  
+  tft.setCursor(5, 285);
+  tft.print("Total packets: ");
+  tft.println(packetCount);
+}
+
+//************************************************ Placeholder screen for flappy bird ******************************************************************
+
+// Placeholder screens for other features
+void drawFlappyBirdScreen() {
+  tft.fillScreen(BLACK);
+  
+  // Draw "Menu" button in top-left corner
+  tft.fillRoundRect(MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H, 4, BLUE);
+  tft.drawRoundRect(MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H, 4, WHITE);
+  tft.setCursor(MENU_BUTTON_X + 7, MENU_BUTTON_Y + 10);
+  tft.setTextColor(WHITE);
+  tft.setTextSize(1);
+  tft.print("MENU");
+  
+  // Draw game title
+  tft.setCursor(80, 20);
+  tft.setTextColor(YELLOW);
+  tft.setTextSize(2);
+  tft.print("FLAPPY BIRD");
+  
+  // Placeholder for game screen
+  tft.drawRect(20, 50, 280, 160, GREEN);
+  tft.setCursor(50, 120);
+  tft.setTextColor(WHITE);
+  tft.print("Game implementation");
+}
+
+//************************************************ Placeholder screen for animation ******************************************************************
+
+void drawMagLevitationScreen() {
+  tft.fillScreen(BLACK);
+  
+  // Draw "Menu" button in top-left corner
+  tft.fillRoundRect(MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H, 4, BLUE);
+  tft.drawRoundRect(MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H, 4, WHITE);
+  tft.setCursor(MENU_BUTTON_X + 7, MENU_BUTTON_Y + 10);
+  tft.setTextColor(WHITE);
+  tft.setTextSize(1);
+  tft.print("MENU");
+  
+  // Draw feature title
+  tft.setCursor(40, 20);
+  tft.setTextColor(MAGENTA);
+  tft.setTextSize(2);
+  tft.print("MAG LEVITATION");
+  
+  // Placeholder for animation area
+  tft.drawRect(20, 50, 280, 160, MAGENTA);
+  tft.setCursor(50, 120);
+  tft.setTextColor(WHITE);
+  tft.print("Animation coming soon");
 }
