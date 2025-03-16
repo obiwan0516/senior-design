@@ -43,35 +43,18 @@
 #define DARKBLUE 0x0010
 #define LIGHTBLUE 0xAEDC
 
-// Menu button definitions
-#define MENU_BUTTON_X 5
-#define MENU_BUTTON_Y 5
-#define MENU_BUTTON_W 50
-#define MENU_BUTTON_H 30
-
-// Main menu button definitions
-#define MAIN_BTN_X 40
-#define MAIN_BTN_W 240
-#define MAIN_BTN_H 40
-#define MAIN_BTN_Y1 70
-#define MAIN_BTN_Y2 130
-#define MAIN_BTN_Y3 190
-
-// Application state
-#define STATE_MENU 0
-#define STATE_GRAPHS 1
-#define STATE_FLAPPY_BIRD 2
-#define STATE_MAG_LEVITATION 3
-int currentState = STATE_MENU;
+// Graph definitions - ADJUSTED POSITIONS TO MOVE UP
+#define GRAPH_HEIGHT 60
+#define GRAPH_WIDTH 180
+#define GRAPH_X 30
+#define GRAPH_Y1 75  // Moved up from 85
+#define GRAPH_Y2 165 // Moved up from 185
+#define MAX_DATA_POINTS 40
 
 // Initialize touch screen
 TouchScreen ts = TouchScreen(XP, YP, XM, YM, 300);
 
 Elegoo_TFTLCD tft(LCD_CS, LCD_CD, LCD_WR, LCD_RD, LCD_RESET);
-
-// Touch debounce variables
-unsigned long lastTouchTime = 0;
-#define TOUCH_DEBOUNCE 300 // ms
 
 // Variables to store data from Uno
 int distance1 = 0;
@@ -91,13 +74,6 @@ bool connectionActive = false;
 String rawData = "";
 
 // Graph variables
-#define GRAPH_HEIGHT 60
-#define GRAPH_WIDTH 180
-#define GRAPH_X 30
-#define GRAPH_Y1 85
-#define GRAPH_Y2 185
-#define MAX_DATA_POINTS 40
-
 int distanceHistory[MAX_DATA_POINTS];
 int pwmHistory[MAX_DATA_POINTS];
 int historyIndex = 0;
@@ -136,103 +112,56 @@ void setup(void) {
   // Display loading animation
   showLoadingAnimation();
   
-  // Show main menu
-  drawMainMenu();
+  // Show sensor graphs screen directly
+  drawScreenLayout();
 }
 
 //************************************************ LOOP ******************************************************************
 
 void loop(void) {
-  // Check touch input for menu navigation
-  handleTouchInput();
-  
-  // Handle current state
-  switch(currentState) {
-    case STATE_MENU:
-      // No continuous updates needed for menu
-      break;
-      
-    case STATE_GRAPHS:
-      handleGraphsMode();
-      break;
-      
-    case STATE_FLAPPY_BIRD:
-      // Placeholder for Flappy Bird game loop
-      // handleFlappyBirdGame();
-      break;
-      
-    case STATE_MAG_LEVITATION:
-      // Placeholder for magnetic levitation animation
-      // handleMagLevitation();
-      break;
-  }
+  // Handle sensor graphs mode directly
+  handleGraphsMode();
   
   // Brief delay
   delay(10);
 }
 
-//************************************************ HandleTouchInput ******************************************************************
+//************************************************ LOADING ANIMATION STARTUP ******************************************************************
 
-void handleTouchInput() {
-  // Read touch input
-  TSPoint p = ts.getPoint();
+void showLoadingAnimation() {
+  // Clear the screen
+  tft.fillScreen(BLACK);
   
-  // Restore pins that were used for touchscreen
-  pinMode(XM, OUTPUT);
-  pinMode(YP, OUTPUT);
+  // Draw title
+  tft.setCursor(50, 30);
+  tft.setTextColor(YELLOW);
+  tft.setTextSize(2);
+  tft.println("Distance Sensor");
+  tft.setCursor(60, 50);
+  tft.println("Monitor System");
   
-  // Check if there's a valid touch
-  if (p.z > MINPRESSURE && p.z < MAXPRESSURE) {
-    // Debounce touch
-    if (millis() - lastTouchTime < TOUCH_DEBOUNCE) {
-      return;
-    }
-    lastTouchTime = millis();
-    
-    // Map touch coordinates to screen coordinates
-    // For rotation 1 (landscape)
-    int x = map(p.y, TS_MINY, TS_MAXY, 0, tft.width()); 
-    int y = map(p.x, TS_MINX, TS_MAXX, 0, tft.height());
-    
-    // Handle touch based on current state
-    switch(currentState) {
-      case STATE_MENU:
-        // Check which menu button was pressed
-        if (isTouchInRect(x, y, MAIN_BTN_X, MAIN_BTN_Y1, MAIN_BTN_W, MAIN_BTN_H)) {
-          // Sensor Graphs button
-          currentState = STATE_GRAPHS;
-          drawScreenLayout();
-        } 
-        else if (isTouchInRect(x, y, MAIN_BTN_X, MAIN_BTN_Y2, MAIN_BTN_W, MAIN_BTN_H)) {
-          // Flappy Bird button
-          currentState = STATE_FLAPPY_BIRD;
-          drawFlappyBirdScreen();
-        } 
-        else if (isTouchInRect(x, y, MAIN_BTN_X, MAIN_BTN_Y3, MAIN_BTN_W, MAIN_BTN_H)) {
-          // Magnetic Levitation button
-          currentState = STATE_MAG_LEVITATION;
-          drawMagLevitationScreen();
-        }
-        break;
-        
-      case STATE_GRAPHS:
-      case STATE_FLAPPY_BIRD:
-      case STATE_MAG_LEVITATION:
-        // Check if menu button was pressed
-        if (isTouchInRect(x, y, MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H)) {
-          // Return to main menu
-          currentState = STATE_MENU;
-          drawMainMenu();
-        }
-        break;
-    }
+  // Draw loading text
+  tft.setCursor(90, 100);
+  tft.setTextColor(WHITE);
+  tft.setTextSize(1);
+  tft.println("LOADING...");
+  
+  // Draw progress bar outline
+  tft.drawRect(60, 120, 200, 20, WHITE);
+  
+  // Animate progress bar
+  for (int i = 0; i < 198; i += 2) {
+    tft.fillRect(61, 121, i, 18, CYAN);
+    delay(10);
   }
-}
-
-// Helper function to check if touch is within a rectangle
-bool isTouchInRect(int touchX, int touchY, int rectX, int rectY, int rectW, int rectH) {
-  return (touchX >= rectX && touchX <= rectX + rectW && 
-          touchY >= rectY && touchY <= rectY + rectH);
+  
+  // Display ready message
+  tft.fillRect(60, 150, 200, 30, BLACK);
+  tft.setCursor(90, 150);
+  tft.setTextColor(GREEN);
+  tft.setTextSize(2);
+  tft.println("READY!");
+  delay(500);
 }
 
 //************************************************ HandleGraphsMode ******************************************************************
@@ -285,99 +214,10 @@ void handleGraphsMode() {
   }
 }
 
-//************************************************ LOADING ANIMATION STARTUP ******************************************************************
-
-
-void showLoadingAnimation() {
-  // Clear the screen
-  tft.fillScreen(BLACK);
-  
-  // Draw title
-  tft.setCursor(50, 30);
-  tft.setTextColor(YELLOW);
-  tft.setTextSize(2);
-  tft.println("Distance Sensor");
-  tft.setCursor(60, 50);
-  tft.println("Monitor System");
-  
-  // Draw loading text
-  tft.setCursor(90, 100);
-  tft.setTextColor(WHITE);
-  tft.setTextSize(1);
-  tft.println("LOADING...");
-  
-  // Draw progress bar outline
-  tft.drawRect(60, 120, 200, 20, WHITE);
-  
-  // Animate progress bar
-  for (int i = 0; i < 198; i += 2) {
-    tft.fillRect(61, 121, i, 18, CYAN);
-    delay(10);
-  }
-  
-  // Display ready message
-  tft.fillRect(60, 150, 200, 30, BLACK);
-  tft.setCursor(90, 150);
-  tft.setTextColor(GREEN);
-  tft.setTextSize(2);
-  tft.println("READY!");
-  delay(500);
-}
-
-//************************************************ MAIN MENU ******************************************************************
-
-void drawMainMenu() {
-  // Clear the screen
-  tft.fillScreen(BLACK);
-  
-  // Draw title
-  tft.setCursor(70, 20);
-  tft.setTextColor(YELLOW);
-  tft.setTextSize(2);
-  tft.println("MAIN MENU");
-  
-  // Draw menu buttons
-  // Button 1: Sensor Graphs
-  drawMenuButton(MAIN_BTN_X, MAIN_BTN_Y1, MAIN_BTN_W, MAIN_BTN_H, "Sensor Graphs", BLUE);
-  
-  // Button 2: Flappy Bird Game
-  drawMenuButton(MAIN_BTN_X, MAIN_BTN_Y2, MAIN_BTN_W, MAIN_BTN_H, "Flappy Bird", GREEN);
-  
-  // Button 3: Magnetic Levitation
-  drawMenuButton(MAIN_BTN_X, MAIN_BTN_Y3, MAIN_BTN_W, MAIN_BTN_H, "Mag Levitation", MAGENTA);
-}
-
-//************************************************ Draws the buttons ******************************************************************
-
-void drawMenuButton(int x, int y, int w, int h, const char* label, uint16_t color) {
-  tft.fillRoundRect(x, y, w, h, 8, color);
-  tft.drawRoundRect(x, y, w, h, 8, WHITE);
-  
-  // Calculate text length
-  int textLength = strlen(label) * 12; // Approximate width with text size 2
-  
-  // Center text on button
-  int textX = x + (w / 2) - (textLength / 2);
-  int textY = y + (h / 2) - 8;
-  
-  tft.setCursor(textX, textY);
-  tft.setTextColor(WHITE);
-  tft.setTextSize(2);
-  tft.print(label);
-}
-
 //************************************************ Draws Sensor Graphs ******************************************************************
 
 void drawScreenLayout() {
   tft.fillScreen(BLACK);
-  
-  // Draw "Menu" button in top-left corner
-  tft.fillRoundRect(MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H, 4, BLUE);
-  tft.drawRoundRect(MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H, 4, WHITE);
-  tft.setCursor(MENU_BUTTON_X + 7, MENU_BUTTON_Y + 10);
-  tft.setTextColor(WHITE);
-  tft.setTextSize(1);
-  tft.print("MENU");
   
   // Draw title - make it more compact
   tft.setCursor(70, 5);
@@ -416,40 +256,40 @@ void drawScreenLayout() {
   // Move indicators and readouts to ensure they fit on screen
   int rightColumnX = 220;
   
-  // Direction indicators (initially both off)
-  tft.fillRect(rightColumnX, 90, 30, 20, DARKGREEN); // FWD button (off)
-  tft.fillRect(rightColumnX + 40, 90, 30, 20, DARKBLUE);  // REV button (off)
+  // Direction indicators (initially both off) - MOVED UP
+  tft.fillRect(rightColumnX, 80, 30, 20, DARKGREEN); // FWD button (off) - moved up from 90
+  tft.fillRect(rightColumnX + 40, 80, 30, 20, DARKBLUE);  // REV button (off) - moved up from 90
   
-  tft.setCursor(rightColumnX + 5, 95);
+  tft.setCursor(rightColumnX + 5, 85);  // Moved up from 95
   tft.setTextColor(WHITE);
   tft.setTextSize(1);
   tft.print("FWD");
   
-  tft.setCursor(rightColumnX + 45, 95);
+  tft.setCursor(rightColumnX + 45, 85);  // Moved up from 95
   tft.setTextColor(WHITE);
   tft.setTextSize(1);
   tft.print("REV");
   
-  // Sensor readouts area
-  tft.setCursor(rightColumnX, 120);
+  // Sensor readouts area - MOVED UP
+  tft.setCursor(rightColumnX, 110);  // Moved up from 120
   tft.setTextColor(WHITE);
   tft.setTextSize(1);
   tft.print("S1:");
   
-  tft.setCursor(rightColumnX + 40, 120);
+  tft.setCursor(rightColumnX + 40, 110);  // Moved up from 120
   tft.print("S2:");
   
-  tft.setCursor(rightColumnX, 135);
+  tft.setCursor(rightColumnX, 125);  // Moved up from 135
   tft.print("S3:");
   
-  tft.setCursor(rightColumnX + 40, 135);
+  tft.setCursor(rightColumnX + 40, 125);  // Moved up from 135
   tft.print("S4:");
   
-  // Log area at bottom
-  tft.drawRect(0, 255, tft.width(), 65, WHITE);
-  tft.setCursor(5, 258);
-  tft.setTextColor(YELLOW);
-  tft.print("SYSTEM LOG");
+  // Log area at bottom - MOVED UP
+  // tft.drawRect(0, 235, tft.width(), 65, WHITE);  // Moved up from 255
+  // tft.setCursor(5, 238);  // Moved up from 258
+  // tft.setTextColor(YELLOW);
+  // tft.print("SYSTEM LOG");
 }
 
 //************************************************ Processes the packets from Arduino Uno ******************************************************************
@@ -505,84 +345,84 @@ void processDataPacket(String data) {
 void updateDisplay() {
   int rightColumnX = 220;
   
-  // Update sensor readings
-  tft.fillRect(rightColumnX + 20, 120, 20, 8, BLACK);
-  tft.setCursor(rightColumnX + 20, 120);
+  // Update sensor readings - MOVED UP
+  tft.fillRect(rightColumnX + 20, 110, 20, 8, BLACK);  // Moved up from 120
+  tft.setCursor(rightColumnX + 20, 110);  // Moved up from 120
   tft.setTextColor(WHITE);
   tft.setTextSize(1);
   tft.print(distance1);
   
-  tft.fillRect(rightColumnX + 60, 120, 20, 8, BLACK);
-  tft.setCursor(rightColumnX + 60, 120);
+  tft.fillRect(rightColumnX + 60, 110, 20, 8, BLACK);  // Moved up from 120
+  tft.setCursor(rightColumnX + 60, 110);  // Moved up from 120
   tft.print(distance2);
   
-  tft.fillRect(rightColumnX + 20, 135, 20, 8, BLACK);
-  tft.setCursor(rightColumnX + 20, 135);
+  tft.fillRect(rightColumnX + 20, 125, 20, 8, BLACK);  // Moved up from 135
+  tft.setCursor(rightColumnX + 20, 125);  // Moved up from 135
   tft.print(distance3);
   
-  tft.fillRect(rightColumnX + 60, 135, 20, 8, BLACK);
-  tft.setCursor(rightColumnX + 60, 135);
+  tft.fillRect(rightColumnX + 60, 125, 20, 8, BLACK);  // Moved up from 135
+  tft.setCursor(rightColumnX + 60, 125);  // Moved up from 135
   tft.print(distance4);
   
-  // Update average distance display
-  tft.fillRect(rightColumnX, 155, 95, 15, BLACK);
-  tft.setCursor(rightColumnX, 155);
+  // Update average distance display - MOVED UP
+  tft.fillRect(rightColumnX, 145, 95, 15, BLACK);  // Moved up from 155
+  tft.setCursor(rightColumnX, 145);  // Moved up from 155
   tft.setTextColor(CYAN);
   tft.setTextSize(1);
   tft.print("Avg: ");
   tft.print(avgDistance);
   tft.print(" mm");
   
-  // Update PWM display
-  tft.fillRect(rightColumnX, 170, 95, 15, BLACK);
-  tft.setCursor(rightColumnX, 170);
+  // Update PWM display - MOVED UP
+  tft.fillRect(rightColumnX, 160, 95, 15, BLACK);  // Moved up from 170
+  tft.setCursor(rightColumnX, 160);  // Moved up from 170
   tft.setTextColor(MAGENTA);
   tft.print("PWM: ");
   tft.print(pwmValue);
   
-  // Update direction indicators
+  // Update direction indicators - MOVED UP
   if (motorDirection == "FWD") {
-    tft.fillRect(rightColumnX, 90, 30, 20, GREEN);  // FWD on
-    tft.fillRect(rightColumnX + 40, 90, 30, 20, DARKBLUE); // REV off
+    tft.fillRect(rightColumnX, 80, 30, 20, GREEN);  // FWD on - moved up from 90
+    tft.fillRect(rightColumnX + 40, 80, 30, 20, DARKBLUE); // REV off - moved up from 90
   } else if (motorDirection == "REV") {
-    tft.fillRect(rightColumnX, 90, 30, 20, DARKGREEN); // FWD off
-    tft.fillRect(rightColumnX + 40, 90, 30, 20, RED);     // REV on
+    tft.fillRect(rightColumnX, 80, 30, 20, DARKGREEN); // FWD off - moved up from 90
+    tft.fillRect(rightColumnX + 40, 80, 30, 20, RED);     // REV on - moved up from 90
   } else {
-    tft.fillRect(rightColumnX, 90, 30, 20, DARKGREEN); // FWD off
-    tft.fillRect(rightColumnX + 40, 90, 30, 20, DARKBLUE);  // REV off
+    tft.fillRect(rightColumnX, 80, 30, 20, DARKGREEN); // FWD off - moved up from 90
+    tft.fillRect(rightColumnX + 40, 80, 30, 20, DARKBLUE);  // REV off - moved up from 90
   }
   
-  // Update direction text
-  tft.setCursor(rightColumnX + 5, 95);
+  // Update direction text - MOVED UP
+  tft.setCursor(rightColumnX + 5, 85);  // Moved up from 95
   tft.setTextColor(WHITE);
   tft.print("FWD");
-  tft.setCursor(rightColumnX + 45, 95);
+  tft.setCursor(rightColumnX + 45, 85);  // Moved up from 95
   tft.print("REV");
   
-  // Update proximity alert
+  // Update proximity alert - MOVED UP
   if (buzzerActive) {
-    tft.fillRect(rightColumnX, 200, 70, 30, RED);
-    tft.setCursor(rightColumnX + 3, 210);
+    tft.fillRect(rightColumnX, 180, 70, 30, RED);  // Moved up from 200
+    tft.setCursor(rightColumnX + 3, 190);  // Moved up from 210
     tft.setTextColor(WHITE);
     tft.print("ALERT!");
   } else {
-    tft.fillRect(rightColumnX, 200, 70, 30, BLACK);
+    tft.fillRect(rightColumnX, 180, 70, 30, BLACK);  // Moved up from 200
   }
   
-  // Update log
-  tft.fillRect(5, 270, tft.width()-10, 45, BLACK);
-  tft.setCursor(5, 270);
+  // Update log - MOVED UP
+  tft.fillRect(5, 250, tft.width()-10, 45, BLACK);  // Moved up from 270
+  tft.setCursor(5, 250);  // Moved up from 270
   tft.setTextColor(WHITE);
   tft.setTextSize(1);
   tft.print("Packets: ");
   tft.print(packetCount);
   
-  tft.setCursor(5, 285);
+  tft.setCursor(5, 265);  // Moved up from 285
   tft.print("Response: ");
   tft.print(responseTime);
   tft.print(" ms");
   
-  tft.setCursor(5, 300);
+  tft.setCursor(5, 280);  // Moved up from 300
   tft.print("Last update: ");
   tft.print((millis() - lastPacketTime) / 1000.0, 1);
   tft.print(" s ago");
@@ -653,7 +493,7 @@ void updateGraph(int dataArray[], int x, int y, int width, int height, int minVa
 //************************************************ Draws the CONNECTION LOST screen ******************************************************************
 
 void drawStatusScreen() {
-  tft.fillRect(0, 50, tft.width(), 200, BLACK);
+  tft.fillRect(0, 50, tft.width(), 180, BLACK);  // Adjusted size for new layout
   tft.setCursor(80, 100);
   tft.setTextColor(RED);
   tft.setTextSize(2);
@@ -663,66 +503,13 @@ void drawStatusScreen() {
   tft.setTextSize(1);
   tft.println("Please check device connections");
   
-  tft.setCursor(5, 270);
+  tft.setCursor(5, 250);  // Moved up from 270
   tft.setTextColor(WHITE);
   tft.print("Last packet received: ");
   tft.print(lastPacketTime / 1000);
   tft.println(" s");
   
-  tft.setCursor(5, 285);
+  tft.setCursor(5, 265);  // Moved up from 285
   tft.print("Total packets: ");
   tft.println(packetCount);
-}
-
-//************************************************ Placeholder screen for flappy bird ******************************************************************
-
-// Placeholder screens for other features
-void drawFlappyBirdScreen() {
-  tft.fillScreen(BLACK);
-  
-  // Draw "Menu" button in top-left corner
-  tft.fillRoundRect(MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H, 4, BLUE);
-  tft.drawRoundRect(MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H, 4, WHITE);
-  tft.setCursor(MENU_BUTTON_X + 7, MENU_BUTTON_Y + 10);
-  tft.setTextColor(WHITE);
-  tft.setTextSize(1);
-  tft.print("MENU");
-  
-  // Draw game title
-  tft.setCursor(80, 20);
-  tft.setTextColor(YELLOW);
-  tft.setTextSize(2);
-  tft.print("FLAPPY BIRD");
-  
-  // Placeholder for game screen
-  tft.drawRect(20, 50, 280, 160, GREEN);
-  tft.setCursor(50, 120);
-  tft.setTextColor(WHITE);
-  tft.print("Game implementation");
-}
-
-//************************************************ Placeholder screen for animation ******************************************************************
-
-void drawMagLevitationScreen() {
-  tft.fillScreen(BLACK);
-  
-  // Draw "Menu" button in top-left corner
-  tft.fillRoundRect(MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H, 4, BLUE);
-  tft.drawRoundRect(MENU_BUTTON_X, MENU_BUTTON_Y, MENU_BUTTON_W, MENU_BUTTON_H, 4, WHITE);
-  tft.setCursor(MENU_BUTTON_X + 7, MENU_BUTTON_Y + 10);
-  tft.setTextColor(WHITE);
-  tft.setTextSize(1);
-  tft.print("MENU");
-  
-  // Draw feature title
-  tft.setCursor(40, 20);
-  tft.setTextColor(MAGENTA);
-  tft.setTextSize(2);
-  tft.print("MAG LEVITATION");
-  
-  // Placeholder for animation area
-  tft.drawRect(20, 50, 280, 160, MAGENTA);
-  tft.setCursor(50, 120);
-  tft.setTextColor(WHITE);
-  tft.print("Animation coming soon");
 }

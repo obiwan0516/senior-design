@@ -163,30 +163,50 @@ void readSensors() {
 }
 
 void processData() {
-  // Map distance to PWM (closer = higher PWM)
-  pwmValue = map(avgDistance, MIN_DIST, MAX_DIST, MAX_PWM, 0);
-  pwmValue = constrain(pwmValue, 0, MAX_PWM);
+  // Set PWM to maximum value for testing
+  pwmValue = MAX_PWM; // Force to maximum (255)
   
-  // Control Motor Speed Based on Distance
-  if (avgDistance < 150) {
-    motorDirection = "FWD";
-    analogWrite(MOTOR_CW, pwmValue);
-    analogWrite(MOTOR_CCW, 0);
-  } else {
-    motorDirection = "REV";
-    analogWrite(MOTOR_CW, 0);
-    analogWrite(MOTOR_CCW, pwmValue);
-  }
+  // Choose which direction you want to test
+  // Option 1: Test forward direction only
+  motorDirection = "FWD";
+  analogWrite(MOTOR_CW, pwmValue);
+  analogWrite(MOTOR_CCW, 0);
   
-  // Buzzer control
-  if (avgDistance <= 60) {
-    buzzerActive = true;
-    tone(BUZZER_PIN, 1000);
-  } else {
-    buzzerActive = false;
-    noTone(BUZZER_PIN);
-  }
+  // Option 2 (comment out Option 1 if using this): Test reverse direction only
+  // motorDirection = "REV";
+  // analogWrite(MOTOR_CW, 0);
+  // analogWrite(MOTOR_CCW, pwmValue);
+  
+  // Optionally disable the buzzer for testing
+  buzzerActive = false;
+  noTone(BUZZER_PIN);
 }
+
+// void processData() { // uncomment this to utilize PWM stress testing
+//   // Map distance to PWM (closer = higher PWM)
+//   pwmValue = map(avgDistance, MIN_DIST, MAX_DIST, MAX_PWM, 0);
+//   pwmValue = constrain(pwmValue, 0, MAX_PWM);
+  
+//   // Control Motor Speed Based on Distance
+//   if (avgDistance < 150) {
+//     motorDirection = "FWD";
+//     analogWrite(MOTOR_CW, pwmValue);
+//     analogWrite(MOTOR_CCW, 0);
+//   } else {
+//     motorDirection = "REV";
+//     analogWrite(MOTOR_CW, 0);
+//     analogWrite(MOTOR_CCW, pwmValue);
+//   }
+  
+//   // Buzzer control
+//   if (avgDistance <= 60) {
+//     buzzerActive = true;
+//     tone(BUZZER_PIN, 1000);
+//   } else {
+//     buzzerActive = false;
+//     noTone(BUZZER_PIN);
+//   }
+// }
 
 void updateLocalDisplay() {
   lcd.clear();
