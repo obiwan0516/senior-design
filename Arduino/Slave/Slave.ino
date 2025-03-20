@@ -168,14 +168,14 @@ void processData() {
   
   // Choose which direction you want to test
   // Option 1: Test forward direction only
-  motorDirection = "FWD";
-  analogWrite(MOTOR_CW, pwmValue);
-  analogWrite(MOTOR_CCW, 0);
+  // motorDirection = "FWD";
+  // analogWrite(MOTOR_CW, pwmValue);
+  // analogWrite(MOTOR_CCW, 0);
   
   // Option 2 (comment out Option 1 if using this): Test reverse direction only
-  // motorDirection = "REV";
-  // analogWrite(MOTOR_CW, 0);
-  // analogWrite(MOTOR_CCW, pwmValue);
+  motorDirection = "REV";
+  analogWrite(MOTOR_CW, 0);
+  analogWrite(MOTOR_CCW, pwmValue);
   
   // Optionally disable the buzzer for testing
   buzzerActive = false;
