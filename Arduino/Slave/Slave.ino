@@ -7,7 +7,7 @@ LiquidCrystal lcd(6, 12, 5, 4, 3, 2);
 VL53L0X sensor1;
 VL53L0X sensor2;
 VL53L0X sensor3;
-VL53L0X sensor4;
+//VL53L0X sensor4;
 
 // Motor Driver Pins
 #define MOTOR_CW 9   // Clockwise (forward) PWM
@@ -30,7 +30,7 @@ const float vcc = 5;  // Reference voltage (12V power supply)
 int distance1 = 0;
 int distance2 = 0;
 int distance3 = 0;
-int distance4 = 0;
+//int distance4 = 0;
 int avgDistance = 0;
 int pwmValue = 0;
 bool buzzerActive = false;
@@ -49,7 +49,7 @@ void setup() {
   pinMode(XSHUT_1, OUTPUT);
   pinMode(XSHUT_2, OUTPUT);
   pinMode(XSHUT_3, OUTPUT);
-  pinMode(XSHUT_4, OUTPUT);
+  //pinMode(XSHUT_4, OUTPUT);
 
   lcd.clear();
   lcd.print("Beginning Init");
@@ -92,7 +92,7 @@ void initializeSensors() {
   digitalWrite(XSHUT_1, LOW);
   digitalWrite(XSHUT_2, LOW);
   digitalWrite(XSHUT_3, LOW);
-  digitalWrite(XSHUT_4, LOW);
+  //digitalWrite(XSHUT_4, LOW);
   delay(10);
   
   // Initialize Sensor 1
@@ -129,15 +129,15 @@ void initializeSensors() {
   }
   
   // Initialize Sensor 4
-  digitalWrite(XSHUT_4, HIGH);
-  delay(100);
-  sensor4.setAddress(0x27);
-  sensor4.setTimeout(500);
-  if (!sensor4.init()) {
-    lcd.clear();
-    lcd.print("Sensor 4 Failed!");
-    while (1) {}
-  }
+  // digitalWrite(XSHUT_4, HIGH);
+  // delay(100);
+  // sensor4.setAddress(0x27);
+  // sensor4.setTimeout(500);
+  // if (!sensor4.init()) {
+  //   lcd.clear();
+  //   lcd.print("Sensor 4 Failed!");
+  //   while (1) {}
+  // }
   
   lcd.clear();
   lcd.print("All Sensors OK!");
@@ -148,45 +148,67 @@ void readSensors() {
   distance1 = sensor1.readRangeSingleMillimeters();
   distance2 = sensor2.readRangeSingleMillimeters();
   distance3 = sensor3.readRangeSingleMillimeters();
-  distance4 = sensor4.readRangeSingleMillimeters();
+  //distance4 = sensor4.readRangeSingleMillimeters();
   
   // Handle timeouts but ensure we still send data
   if (sensor1.timeoutOccurred() || sensor2.timeoutOccurred() || 
-      sensor3.timeoutOccurred() || sensor4.timeoutOccurred()) {
+      sensor3.timeoutOccurred() /*|| sensor4.timeoutOccurred()*/) {
     lcd.clear();
     lcd.print("Sensor Timeout!");
     // Instead of returning, we'll continue with whatever data we have
   }
   
   // Compute average distance (even with timeouts)
-  avgDistance = (distance1 + distance2 + distance3 + distance4) / 4;
+  avgDistance = (distance1 + distance2 + distance3 /*+ distance4*/) / 3;
 }
 
 void processData() {
-  // Map distance to PWM (closer = higher PWM)
-  pwmValue = map(avgDistance, MIN_DIST, MAX_DIST, MAX_PWM, 0);
-  pwmValue = constrain(pwmValue, 0, MAX_PWM);
+  // Set PWM to maximum value for testing
+  pwmValue = 169; // Force to maximum (255)
   
-  // Control Motor Speed Based on Distance
-  if (avgDistance < 150) {
-    motorDirection = "FWD";
-    analogWrite(MOTOR_CW, pwmValue);
-    analogWrite(MOTOR_CCW, 0);
-  } else {
-    motorDirection = "REV";
-    analogWrite(MOTOR_CW, 0);
-    analogWrite(MOTOR_CCW, pwmValue);
-  }
+  // Choose which direction you want to test
+  // Option 1: Test forward direction only
+  // motorDirection = "FWD";
+  // analogWrite(MOTOR_CW, pwmValue);
+  // analogWrite(MOTOR_CCW, 0);
   
-  // Buzzer control
-  if (avgDistance <= 60) {
-    buzzerActive = true;
-    tone(BUZZER_PIN, 1000);
-  } else {
-    buzzerActive = false;
-    noTone(BUZZER_PIN);
-  }
+  // Option 2 (comment out Option 1 if using this): Test reverse direction only
+  motorDirection = "REV";
+  analogWrite(MOTOR_CW, 0);
+  analogWrite(MOTOR_CCW, pwmValue);
+  
+  // Optionally disable the buzzer for testing
+  buzzerActive = false;
+  noTone(BUZZER_PIN);
 }
+
+// Old Control Code
+
+// void processData() {
+//   // Map distance to PWM (closer = higher PWM)
+//   pwmValue = map(avgDistance, MIN_DIST, MAX_DIST, MAX_PWM, 0);
+//   pwmValue = constrain(pwmValue, 0, MAX_PWM);
+  
+//   // Control Motor Speed Based on Distance
+//   if (avgDistance < 150) {
+//     motorDirection = "FWD";
+//     analogWrite(MOTOR_CW, pwmValue);
+//     analogWrite(MOTOR_CCW, 0);
+//   } else {
+//     motorDirection = "REV";
+//     analogWrite(MOTOR_CW, 0);
+//     analogWrite(MOTOR_CCW, pwmValue);
+//   }
+  
+//   // Buzzer control
+//   if (avgDistance <= 60) {
+//     buzzerActive = true;
+//     tone(BUZZER_PIN, 1000);
+//   } else {
+//     buzzerActive = false;
+//     noTone(BUZZER_PIN);
+//   }
+// }
 
 void updateLocalDisplay() {
   lcd.clear();
@@ -218,7 +240,7 @@ void transmitData() {
   String dataPacket = String(distance1) + "," +
                      String(distance2) + "," +
                      String(distance3) + "," +
-                     String(distance4) + "," +
+                     "0"/*String(distance4)*/ + "," +
                      String(avgDistance) + "," +
                      String(pwmValue) + "," +
                      motorDirection + "," +
