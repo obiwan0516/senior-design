@@ -56,6 +56,7 @@
 
 // Filtering settings
 #define FILTER_ALPHA 0.2  // Low-pass filter coefficient (0-1): lower = more filtering
+#define PWM_FILTER_ALPHA 0.1 // More aggressive filtering for PWM
 #define CALIBRATION_OFFSET 0  // Offset to match LCD display readings
 #define CALIBRATION_SCALE 1.0  // Scale factor to match LCD display readings
 
@@ -74,6 +75,8 @@ float filteredDistance = 0;  // Filtered average distance (float for better prec
 int pwmValue = 0;
 float filteredPwm = 0;       // Filtered PWM value (float for better filtering)
 int previousDistances[5] = {0, 0, 0, 0, 0};  // For median filtering
+int previousPwmValues[5] = {0, 0, 0, 0, 0};  // For PWM median filtering
+int lastFilteredPwm = 0;     // For rate limiting
 String motorDirection = "IDLE";
 bool buzzerActive = false;
 
@@ -89,6 +92,9 @@ int distanceHistory[MAX_DATA_POINTS];
 int pwmHistory[MAX_DATA_POINTS];
 int historyIndex = 0;
 bool graphFull = false;
+
+// Maximum allowed PWM change per reading
+#define MAX_PWM_CHANGE 15
 
 //************************************************ SETUP ******************************************************************
 
@@ -304,6 +310,88 @@ void drawScreenLayout() {
   tft.print("mm");
 }
 
+//************************************************ Calculate Median PWM value ******************************************************************
+
+// Calculate median PWM from a rolling window of 5 values around each point
+int calculateRollingMedianPwm(int pointIndex) {
+  int surroundingValues[5];
+  int validCount = 0;
+  
+  // Collect up to 5 values centered on current point
+  for (int j = -2; j <= 2; j++) {
+    int idx = (pointIndex + j);
+    
+    // Handle wrapping
+    if (idx < 0) {
+      if (!graphFull) continue;  // Skip if not enough data yet
+      idx += MAX_DATA_POINTS;
+    }
+    if (idx >= MAX_DATA_POINTS) {
+      idx -= MAX_DATA_POINTS;
+    }
+    
+    // Only use valid data points
+    if (graphFull || idx < historyIndex) {
+      surroundingValues[validCount++] = pwmHistory[idx];
+    }
+  }
+  
+  // If no valid values, return 0
+  if (validCount == 0) return 0;
+  
+  // Sort the valid values
+  for (int j = 0; j < validCount-1; j++) {
+    for (int k = 0; k < validCount-j-1; k++) {
+      if (surroundingValues[k] > surroundingValues[k+1]) {
+        int temp = surroundingValues[k];
+        surroundingValues[k] = surroundingValues[k+1];
+        surroundingValues[k+1] = temp;
+      }
+    }
+  }
+  
+  // Return the median value
+  return surroundingValues[validCount/2];
+}
+
+// Calculate median of all PWM values
+int calculateMedianPwm() {
+  // Create a copy of the PWM history for sorting
+  int sortedPwm[MAX_DATA_POINTS];
+  int count = graphFull ? MAX_DATA_POINTS : historyIndex;
+  
+  // Nothing to do if no data
+  if (count == 0) return 0;
+  
+  // Copy the values we want to find the median of
+  for (int i = 0; i < count; i++) {
+    int idx = (historyIndex - count + i) % MAX_DATA_POINTS;
+    if (idx < 0) idx += MAX_DATA_POINTS;
+    sortedPwm[i] = pwmHistory[idx];
+  }
+  
+  // Sort the array (simple bubble sort)
+  for (int i = 0; i < count-1; i++) {
+    for (int j = 0; j < count-i-1; j++) {
+      if (sortedPwm[j] > sortedPwm[j+1]) {
+        // Swap
+        int temp = sortedPwm[j];
+        sortedPwm[j] = sortedPwm[j+1];
+        sortedPwm[j+1] = temp;
+      }
+    }
+  }
+  
+  // Return the median value
+  if (count % 2 == 0) {
+    // Even number of elements, average the middle two
+    return (sortedPwm[count/2 - 1] + sortedPwm[count/2]) / 2;
+  } else {
+    // Odd number of elements, return the middle one
+    return sortedPwm[count/2];
+  }
+}
+
 //************************************************ Processes the packets from Arduino Uno ******************************************************************
 
 void processDataPacket(String data) {
@@ -344,19 +432,31 @@ void processDataPacket(String data) {
   avgDistance = values[4];
   pwmValue = values[5];
   
-  // Shift previous readings and add new one for median filtering
+  // Shift previous readings and add new one for median filtering - DISTANCE
   for (int i = 0; i < 4; i++) {
     previousDistances[i] = previousDistances[i+1];
   }
   previousDistances[4] = avgDistance;
   
-  // Make a copy for sorting
+  // Shift previous readings and add new one for median filtering - PWM
+  for (int i = 0; i < 4; i++) {
+    previousPwmValues[i] = previousPwmValues[i+1];
+  }
+  previousPwmValues[4] = pwmValue;
+  
+  // Make a copy for sorting - DISTANCE
   int sortedDistances[5];
   for (int i = 0; i < 5; i++) {
     sortedDistances[i] = previousDistances[i];
   }
   
-  // Simple bubble sort to find median
+  // Make a copy for sorting - PWM
+  int sortedPwmValues[5];
+  for (int i = 0; i < 5; i++) {
+    sortedPwmValues[i] = previousPwmValues[i];
+  }
+  
+  // Simple bubble sort to find median - DISTANCE
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4-i; j++) {
       if (sortedDistances[j] > sortedDistances[j+1]) {
@@ -367,18 +467,40 @@ void processDataPacket(String data) {
     }
   }
   
+  // Simple bubble sort to find median - PWM
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4-i; j++) {
+      if (sortedPwmValues[j] > sortedPwmValues[j+1]) {
+        int tempVal = sortedPwmValues[j];
+        sortedPwmValues[j] = sortedPwmValues[j+1];
+        sortedPwmValues[j+1] = tempVal;
+      }
+    }
+  }
+  
   // Use median value (middle value) for filtering - better spike rejection
   int medianDistance = sortedDistances[2];
+  int medianPwm = sortedPwmValues[2];
   
   // Apply low-pass filter to smooth out spikes
   if (filteredDistance == 0) {
     // First reading - initialize filter
     filteredDistance = medianDistance;
-    filteredPwm = pwmValue;
+    filteredPwm = medianPwm;
+    lastFilteredPwm = medianPwm;
   } else {
     // Apply exponential moving average filter
     filteredDistance = (1 - FILTER_ALPHA) * filteredDistance + FILTER_ALPHA * medianDistance;
-    filteredPwm = (1 - FILTER_ALPHA) * filteredPwm + FILTER_ALPHA * pwmValue;
+    
+    // More aggressive filtering for PWM
+    filteredPwm = (1 - PWM_FILTER_ALPHA) * filteredPwm + PWM_FILTER_ALPHA * medianPwm;
+    
+    // Apply rate limiting to PWM
+    int pwmDelta = filteredPwm - lastFilteredPwm;
+    if (abs(pwmDelta) > MAX_PWM_CHANGE) {
+      filteredPwm = lastFilteredPwm + (pwmDelta > 0 ? MAX_PWM_CHANGE : -MAX_PWM_CHANGE);
+    }
+    lastFilteredPwm = filteredPwm;
   }
   
   // Apply calibration to match LCD display readings
@@ -444,6 +566,14 @@ void updateDisplay() {
   tft.print("PWM: ");
   tft.print(255 - int(filteredPwm));  // Display inverted PWM value (255-PWM)
   
+  // Add median PWM display
+  int medianPwmValue = calculateMedianPwm();
+  tft.fillRect(rightColumnX, 190, 95, 15, BLACK);
+  tft.setCursor(rightColumnX, 190);
+  tft.setTextColor(YELLOW);
+  tft.print("Med PWM: ");
+  tft.print(255 - medianPwmValue);
+  
   // Update direction indicators - MOVED UP
   if (motorDirection == "FWD") {
     tft.fillRect(rightColumnX, 80, 30, 20, GREEN);  // FWD on - moved up from 90
@@ -465,12 +595,12 @@ void updateDisplay() {
   
   // Update proximity alert - MOVED UP
   if (buzzerActive) {
-    tft.fillRect(rightColumnX, 195, 70, 30, RED);  // Moved down slightly to make room
-    tft.setCursor(rightColumnX + 3, 205);  
+    tft.fillRect(rightColumnX, 205, 70, 30, RED);  // Moved down slightly to make room
+    tft.setCursor(rightColumnX + 3, 215);  
     tft.setTextColor(WHITE);
     tft.print("ALERT!");
   } else {
-    tft.fillRect(rightColumnX, 195, 70, 30, BLACK);  // Moved down slightly
+    tft.fillRect(rightColumnX, 205, 70, 30, BLACK);  // Moved down slightly
   }
   
   // Update log - MOVED UP
@@ -494,12 +624,29 @@ void updateDisplay() {
   // Update the distance graph with filtered data
   updateGraph(distanceHistory, GRAPH_X, GRAPH_Y1, GRAPH_WIDTH, GRAPH_HEIGHT, 0, MAX_DISTANCE, CYAN);
   
-  // Update the PWM graph with filtered data - inverted (255-PWM)
-  // Create temporary array with inverted PWM values
+  // For PWM graph, use rolling median for each point - less drastic approach
+  int smoothedPwmHistory[MAX_DATA_POINTS];
+  
+  for (int i = 0; i < MAX_DATA_POINTS; i++) {
+    // Calculate rolling median for each point
+    if (graphFull || i < historyIndex) {
+      int actualIndex = (historyIndex - MAX_DATA_POINTS + i) % MAX_DATA_POINTS;
+      if (actualIndex < 0) actualIndex += MAX_DATA_POINTS;
+      
+      // Get the median of 5 values centered on this point
+      smoothedPwmHistory[i] = calculateRollingMedianPwm(actualIndex);
+    } else {
+      smoothedPwmHistory[i] = 0;
+    }
+  }
+  
+  // Create inverted PWM values (255-PWM)
   int invertedPwmHistory[MAX_DATA_POINTS];
   for (int i = 0; i < MAX_DATA_POINTS; i++) {
-    invertedPwmHistory[i] = 255 - pwmHistory[i];
+    invertedPwmHistory[i] = 255 - smoothedPwmHistory[i];
   }
+  
+  // Update the PWM graph with smoothed values
   updateGraph(invertedPwmHistory, GRAPH_X, GRAPH_Y2, GRAPH_WIDTH, GRAPH_HEIGHT, 0, 255, MAGENTA);
 }
 
