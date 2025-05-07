@@ -9,7 +9,7 @@
 #define LCD_CS A3 // Chip Select goes to Analog 3
 #define LCD_CD A2 // Command/Data goes to Analog 2
 #define LCD_WR A1 // LCD Write goes to Analog 1
-#define LCD_RD A0 // LCD Read goes to Analog 0
+#define LCD_RD A0 // LCD Read goes to Analog 0  
 #define LCD_RESET A4 // Can alternately just connect to Arduino's reset pin
 
 // Touch screen pins
@@ -51,6 +51,14 @@
 #define GRAPH_Y2 165 // Moved up from 185
 #define MAX_DATA_POINTS 40
 
+// Maximum distance value - CHANGED FROM 500 TO 250
+#define MAX_DISTANCE 250
+
+// Filtering settings
+#define FILTER_ALPHA 0.2  // Low-pass filter coefficient (0-1): lower = more filtering
+#define CALIBRATION_OFFSET 0  // Offset to match LCD display readings
+#define CALIBRATION_SCALE 1.0  // Scale factor to match LCD display readings
+
 // Initialize touch screen
 TouchScreen ts = TouchScreen(XP, YP, XM, YM, 300);
 
@@ -62,7 +70,10 @@ int distance2 = 0;
 int distance3 = 0;
 int distance4 = 0;
 int avgDistance = 0;
+float filteredDistance = 0;  // Filtered average distance (float for better precision)
 int pwmValue = 0;
+float filteredPwm = 0;       // Filtered PWM value (float for better filtering)
+int previousDistances[5] = {0, 0, 0, 0, 0};  // For median filtering
 String motorDirection = "IDLE";
 bool buzzerActive = false;
 
@@ -101,7 +112,7 @@ void setup(void) {
   }
   
   tft.begin(identifier);
-  tft.setRotation(1);  // Set to landscape mode (0-3 for different rotations)
+  tft.setRotation(3);  // Set to landscape mode (0-3 for different rotations)
   
   // Initialize history arrays
   for(int i = 0; i < MAX_DATA_POINTS; i++) {
@@ -200,9 +211,9 @@ void handleGraphsMode() {
       
       packetCount++;
       
-      // Add new data to history
-      distanceHistory[historyIndex] = avgDistance;
-      pwmHistory[historyIndex] = pwmValue;
+      // Add new data to history (use filtered values)
+      distanceHistory[historyIndex] = filteredDistance;
+      pwmHistory[historyIndex] = filteredPwm;
       historyIndex = (historyIndex + 1) % MAX_DATA_POINTS;
       if(historyIndex == 0) {
         graphFull = true;
@@ -237,7 +248,7 @@ void drawScreenLayout() {
   tft.setCursor(GRAPH_X-3, GRAPH_Y2-13);
   tft.setTextColor(MAGENTA);
   tft.setTextSize(1);
-  tft.println("PWM Value");
+  tft.println("PWM Value (255-PWM)");
   
   // Draw grid lines for distance graph
   for(int y = 0; y < GRAPH_HEIGHT; y += 15) {
@@ -285,11 +296,12 @@ void drawScreenLayout() {
   tft.setCursor(rightColumnX + 40, 125);  // Moved up from 135
   tft.print("S4:");
   
-  // Log area at bottom - MOVED UP
-  // tft.drawRect(0, 235, tft.width(), 65, WHITE);  // Moved up from 255
-  // tft.setCursor(5, 238);  // Moved up from 258
-  // tft.setTextColor(YELLOW);
-  // tft.print("SYSTEM LOG");
+  // Display range indicator for distance graph
+  tft.setCursor(GRAPH_X + GRAPH_WIDTH + 10, GRAPH_Y1);
+  tft.setTextColor(CYAN);
+  tft.print("0-");
+  tft.print(MAX_DISTANCE);
+  tft.print("mm");
 }
 
 //************************************************ Processes the packets from Arduino Uno ******************************************************************
@@ -331,9 +343,53 @@ void processDataPacket(String data) {
   distance4 = values[3];
   avgDistance = values[4];
   pwmValue = values[5];
+  
+  // Shift previous readings and add new one for median filtering
+  for (int i = 0; i < 4; i++) {
+    previousDistances[i] = previousDistances[i+1];
+  }
+  previousDistances[4] = avgDistance;
+  
+  // Make a copy for sorting
+  int sortedDistances[5];
+  for (int i = 0; i < 5; i++) {
+    sortedDistances[i] = previousDistances[i];
+  }
+  
+  // Simple bubble sort to find median
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4-i; j++) {
+      if (sortedDistances[j] > sortedDistances[j+1]) {
+        int tempVal = sortedDistances[j];
+        sortedDistances[j] = sortedDistances[j+1];
+        sortedDistances[j+1] = tempVal;
+      }
+    }
+  }
+  
+  // Use median value (middle value) for filtering - better spike rejection
+  int medianDistance = sortedDistances[2];
+  
+  // Apply low-pass filter to smooth out spikes
+  if (filteredDistance == 0) {
+    // First reading - initialize filter
+    filteredDistance = medianDistance;
+    filteredPwm = pwmValue;
+  } else {
+    // Apply exponential moving average filter
+    filteredDistance = (1 - FILTER_ALPHA) * filteredDistance + FILTER_ALPHA * medianDistance;
+    filteredPwm = (1 - FILTER_ALPHA) * filteredPwm + FILTER_ALPHA * pwmValue;
+  }
+  
+  // Apply calibration to match LCD display readings
+  filteredDistance = (filteredDistance * CALIBRATION_SCALE) + CALIBRATION_OFFSET;
+  
+  // Constrain filtered values to valid ranges
+  filteredDistance = constrain(filteredDistance, 0, MAX_DISTANCE);
+  filteredPwm = constrain(filteredPwm, 0, 255);
 
   // **Buzzer Activation when distance <= 60mm**
-  if (avgDistance <= 60) {
+  if (filteredDistance <= 60) {  // Use filtered distance for more stable alerts
     tone(BUZZER_PIN, 1000); // Play buzzer at 1kHz
   } else {
     noTone(BUZZER_PIN); // Stop buzzer
@@ -369,16 +425,24 @@ void updateDisplay() {
   tft.setCursor(rightColumnX, 145);  // Moved up from 155
   tft.setTextColor(CYAN);
   tft.setTextSize(1);
-  tft.print("Avg: ");
+  tft.print("Raw: ");
   tft.print(avgDistance);
   tft.print(" mm");
   
-  // Update PWM display - MOVED UP
-  tft.fillRect(rightColumnX, 160, 95, 15, BLACK);  // Moved up from 170
-  tft.setCursor(rightColumnX, 160);  // Moved up from 170
+  // Display filtered distance
+  tft.fillRect(rightColumnX, 160, 95, 15, BLACK);
+  tft.setCursor(rightColumnX, 160);
+  tft.setTextColor(CYAN);
+  tft.print("Filt: ");
+  tft.print(int(filteredDistance));
+  tft.print(" mm");
+  
+  // Update PWM display - MOVED UP and INVERTED (255-PWM)
+  tft.fillRect(rightColumnX, 175, 95, 15, BLACK);  // Moved up position
+  tft.setCursor(rightColumnX, 175);  // Moved up position
   tft.setTextColor(MAGENTA);
   tft.print("PWM: ");
-  tft.print(pwmValue);
+  tft.print(255 - int(filteredPwm));  // Display inverted PWM value (255-PWM)
   
   // Update direction indicators - MOVED UP
   if (motorDirection == "FWD") {
@@ -401,12 +465,12 @@ void updateDisplay() {
   
   // Update proximity alert - MOVED UP
   if (buzzerActive) {
-    tft.fillRect(rightColumnX, 180, 70, 30, RED);  // Moved up from 200
-    tft.setCursor(rightColumnX + 3, 190);  // Moved up from 210
+    tft.fillRect(rightColumnX, 195, 70, 30, RED);  // Moved down slightly to make room
+    tft.setCursor(rightColumnX + 3, 205);  
     tft.setTextColor(WHITE);
     tft.print("ALERT!");
   } else {
-    tft.fillRect(rightColumnX, 180, 70, 30, BLACK);  // Moved up from 200
+    tft.fillRect(rightColumnX, 195, 70, 30, BLACK);  // Moved down slightly
   }
   
   // Update log - MOVED UP
@@ -427,11 +491,16 @@ void updateDisplay() {
   tft.print((millis() - lastPacketTime) / 1000.0, 1);
   tft.print(" s ago");
   
-  // Update the distance graph
-  updateGraph(distanceHistory, GRAPH_X, GRAPH_Y1, GRAPH_WIDTH, GRAPH_HEIGHT, 0, 500, CYAN);
+  // Update the distance graph with filtered data
+  updateGraph(distanceHistory, GRAPH_X, GRAPH_Y1, GRAPH_WIDTH, GRAPH_HEIGHT, 0, MAX_DISTANCE, CYAN);
   
-  // Update the PWM graph
-  updateGraph(pwmHistory, GRAPH_X, GRAPH_Y2, GRAPH_WIDTH, GRAPH_HEIGHT, 0, 255, MAGENTA);
+  // Update the PWM graph with filtered data - inverted (255-PWM)
+  // Create temporary array with inverted PWM values
+  int invertedPwmHistory[MAX_DATA_POINTS];
+  for (int i = 0; i < MAX_DATA_POINTS; i++) {
+    invertedPwmHistory[i] = 255 - pwmHistory[i];
+  }
+  updateGraph(invertedPwmHistory, GRAPH_X, GRAPH_Y2, GRAPH_WIDTH, GRAPH_HEIGHT, 0, 255, MAGENTA);
 }
 
 //************************************************ Clears the distance sensor graphs ******************************************************************
